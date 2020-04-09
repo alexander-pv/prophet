@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 from __future__ import absolute_import, division, print_function
+from fbprophet.constants import CMDSTAN_PATH
 
 import logging
 from collections import OrderedDict, defaultdict
@@ -15,11 +16,13 @@ import numpy as np
 import pandas as pd
 
 from fbprophet.make_holidays import get_holiday_names, make_holidays_df
-from fbprophet.models import StanBackendEnum
+from fbprophet.models import StanBackendEnum, CmdStanPyBackend
 from fbprophet.plot import (plot, plot_components)
 
 logger = logging.getLogger('fbprophet')
-logger.setLevel(logging.INFO)
+logger.addHandler(logging.NullHandler())
+if len(logger.handlers) == 1:
+    logging.basicConfig(level=logging.INFO)
 
 
 class Prophet(object):
@@ -74,6 +77,9 @@ class Prophet(object):
         uncertainty intervals.
     stan_backend: str as defined in StanBackendEnum default: None - will try to
         iterate over all available backends and find the working one
+    constr_regressors: list, names of constrained regressors.
+    constr_bounds: list, lower and upper bound for constrained regressors.
+
     """
 
     def __init__(
@@ -93,7 +99,9 @@ class Prophet(object):
             mcmc_samples=0,
             interval_width=0.80,
             uncertainty_samples=1000,
-            stan_backend=None
+            stan_backend='PYSTAN',
+            constr_regressors=[],
+            constr_bounds=[0, 1e10],
     ):
         self.growth = growth
 
@@ -138,20 +146,30 @@ class Prophet(object):
         self.train_holiday_names = None
         self.fit_kwargs = {}
         self.validate_inputs()
+        self.constr_regressors = constr_regressors
+        self.constr_bounds = constr_bounds
         self._load_stan_backend(stan_backend)
+        self.fitted = None
+
+        if self.stan_backend == 'CMDSTANPY':
+            from cmdstanpy import cmdstan_path, set_cmdstan_path
+            set_cmdstan_path(CMDSTAN_PATH)
+            newpath = cmdstan_path()
+            print(f'PATH FOR CMDSTAN: {newpath}')
 
     def _load_stan_backend(self, stan_backend):
+
         if stan_backend is None:
             for i in StanBackendEnum:
+                print(i)
                 try:
                     logger.debug("Trying to load backend: %s", i.name)
                     return self._load_stan_backend(i.name)
                 except Exception as e:
                     logger.debug("Unable to load backend %s (%s), trying the next one", i.name, e)
         else:
-            self.stan_backend = StanBackendEnum.get_backend_class(stan_backend)(logger)
-
-        logger.debug("Loaded stan backend: %s", self.stan_backend.get_type())
+            self.stan_backend = StanBackendEnum.get_backend_class(stan_backend)(logger, self.constr_regressors)
+            logger.debug("Loaded stan backend: %s", self.stan_backend.get_type())
 
     def validate_inputs(self):
         """Validates the inputs to Prophet."""
@@ -829,6 +847,8 @@ class Prophet(object):
                 x.split('_delim_')[0] for x in seasonal_features.columns
             ],
         })
+
+
         # Add total for holidays
         if self.train_holiday_names is not None:
             components = self.add_group_component(
@@ -849,6 +869,7 @@ class Prophet(object):
             modes[mode].append('extra_regressors_' + mode)
         # After all of the additive/multiplicative groups have been added,
         modes[self.seasonality_mode].append('holidays')
+
         # Convert to a binary matrix
         component_cols = pd.crosstab(
             components['col'], components['component'],
@@ -1098,6 +1119,7 @@ class Prophet(object):
 
         self.set_changepoints()
 
+
         dat = {
             'T': history.shape[0],
             'K': seasonal_features.shape[1],
@@ -1107,11 +1129,20 @@ class Prophet(object):
             't_change': self.changepoints_t,
             'X': seasonal_features,
             'sigmas': prior_scales,
+            'mus': [0]*seasonal_features.shape[1],
             'tau': self.changepoint_prior_scale,
             'trend_indicator': int(self.growth == 'logistic'),
             's_a': component_cols['additive_terms'],
             's_m': component_cols['multiplicative_terms'],
         }
+
+        if self.constr_regressors:
+            constr_col_idx = [int(seasonal_features.columns.tolist().index(x) + 1) for x in self.constr_regressors]
+            dat.update({'n_constr': len(constr_col_idx),
+                        'constr_vec': constr_col_idx,
+                        'L': self.constr_bounds[0],
+                        'U': self.constr_bounds[1]
+                        })
 
         if self.growth == 'linear':
             dat['cap'] = np.zeros(self.history.shape[0])
@@ -1136,7 +1167,7 @@ class Prophet(object):
             for par in self.params:
                 self.params[par] = np.array([self.params[par]])
         elif self.mcmc_samples > 0:
-            self.params = self.stan_backend.sampling(stan_init, dat, self.mcmc_samples, **kwargs)
+            self.params, self.fitted = self.stan_backend.sampling(stan_init, dat, self.mcmc_samples, **kwargs)
         else:
             self.params = self.stan_backend.fit(stan_init, dat, **kwargs)
 
