@@ -76,23 +76,19 @@ functions {
 }
 
 data {
-  int T;                    // Number of time periods
-  int<lower=1> K;           // Number of regressors
-  vector[T] t;              // Time
-  vector[T] cap;            // Capacities for logistic trend
-  vector[T] y;              // Time series
-  int S;                    // Number of changepoints
-  vector[S] t_change;       // Times of trend changepoints
-  matrix[T,K] X;            // Regressors
-  vector[K] sigmas;         // Scale on seasonality prior
-  real<lower=0> tau;        // Scale on changepoints prior
-  int trend_indicator;      // 0 for linear, 1 for logistic
-  vector[K] s_a;            // Indicator of additive features
-  vector[K] s_m;            // Indicator of multiplicative features
-  int n_constr;             // Number of regressors with constrained priors
-  int constr_vec[n_constr]; // Indexes to find a priori constrained features in X
-  int norm_vec[K-n_constr]; // Indexes to find a priori unconstrained features in X
-  matrix[n_constr, 2] B;    // Bounds array for constrained regressors: 1st column - lower, 2d column - upper
+  int T;                // Number of time periods
+  int<lower=1> K;       // Number of regressors
+  vector[T] t;          // Time
+  vector[T] cap;        // Capacities for logistic trend
+  vector[T] y;          // Time series
+  int S;                // Number of changepoints
+  vector[S] t_change;   // Times of trend changepoints
+  matrix[T,K] X;        // Regressors
+  vector[K] sigmas;     // Scale on seasonality prior
+  real<lower=0> tau;    // Scale on changepoints prior
+  int trend_indicator;  // 0 for linear, 1 for logistic
+  vector[K] s_a;        // Indicator of additive features
+  vector[K] s_m;        // Indicator of multiplicative features
 }
 
 transformed data {
@@ -105,16 +101,7 @@ parameters {
   real m;                   // Trend offset
   vector[S] delta;          // Trend rate adjustments
   real<lower=0> sigma_obs;  // Observation noise
-  vector<lower=0>[n_constr] beta_constrained;
-  vector[K-n_constr] beta_unconstrained;
-}
-
-transformed parameters {
-  vector[K] beta;
-  vector[n_constr] sigmas_pos;
-  beta[norm_vec] = beta_unconstrained;
-  beta[constr_vec] = beta_constrained;
-  sigmas_pos = sigmas[constr_vec];
+  vector[K] beta;           // Regressor coefficients
 }
 
 model {
@@ -123,11 +110,7 @@ model {
   m ~ normal(0, 5);
   delta ~ double_exponential(0, tau);
   sigma_obs ~ normal(0, 0.5);
-
-  beta_unconstrained ~ normal(0, sigmas[norm_vec]);
-  for (i in 1:n_constr) {
-      beta_constrained[i] ~ normal(0, sigmas_pos[i]) T[B[i, 1], B[i, 2]];
-  };
+  beta ~ normal(0, sigmas);
 
   // Likelihood
   if (trend_indicator == 0) {

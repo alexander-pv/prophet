@@ -53,10 +53,9 @@ class CmdStanPyBackend(IStanBackend):
     def build_model(target_dir, model_dir, model_name, target_name):
         from shutil import copy
         import cmdstanpy
-
-        sm = cmdstanpy.Model(stan_file=os.path.join(model_dir, model_name))
+        sm = cmdstanpy.Model(stan_file=os.path.join(os.sep.join(model_dir), model_name))
         sm.compile()
-        copy(sm.exe_file, os.path.join(target_dir, target_name))
+        copy(sm.exe_file, os.path.join(os.sep.join(target_dir), target_name))
 
     def load_model(self, constr_regressors):
         import cmdstanpy
@@ -64,10 +63,20 @@ class CmdStanPyBackend(IStanBackend):
         models_dict = {False:  'prophet_model.bin',
                        True:  os.path.join('contrib', 'prophet_normal_truncated.bin'),
                        }
+        cur_model = models_dict[bool(constr_regressors)]
         model_file = pkg_resources.resource_filename(
-                'fbprophet',
-                f'stan_model/{models_dict[bool(constr_regressors)]}',
+            'fbprophet',
+            f'stan_model/{cur_model}',
         )
+
+        model_dir = model_file.split(os.sep)[:-1]
+        model_name = model_file.split(os.sep)[-1]
+        if model_name not in os.listdir(os.sep.join(model_dir)):
+            target_name, model_name = model_name, model_name.replace('.bin', '.stan')
+            target_dir, model_dir = model_dir, model_dir
+            print(f'Building model: {model_name}\nModel dir: {os.sep.join(model_dir)}\nName: {model_name}')
+            self.build_model(target_dir, model_dir, model_name, target_name)
+
         return cmdstanpy.Model(exe_file=model_file)
 
     def fit(self, stan_init, stan_data, **kwargs):
@@ -108,7 +117,6 @@ class CmdStanPyBackend(IStanBackend):
             kwargs['chains'] = 4
         if 'warmup_iters' not in kwargs:
             kwargs['warmup_iters'] = samples // 2
-
         stan_fit = self.model.sample(data=stan_data,
                                      inits=stan_init,
                                      sampling_iters=samples,
@@ -151,8 +159,7 @@ class CmdStanPyBackend(IStanBackend):
             cmdstanpy_data.update({'n_constr': data['n_constr'],
                                    'constr_vec': data['constr_vec'],
                                    'norm_vec': [int(x) for x in range(1, data['K']+1) if x not in data['constr_vec']],
-                                   'L': data['L'],
-                                   'U': data['U'],
+                                   'B': data['B'],
                                    })
 
         cmdstanpy_init = {

@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from fbprophet.make_holidays import get_holiday_names, make_holidays_df
-from fbprophet.models import StanBackendEnum, CmdStanPyBackend
+from fbprophet.models import StanBackendEnum
 from fbprophet.plot import (plot, plot_components)
 
 logger = logging.getLogger('fbprophet')
@@ -77,8 +77,6 @@ class Prophet(object):
         uncertainty intervals.
     stan_backend: str as defined in StanBackendEnum default: None - will try to
         iterate over all available backends and find the working one
-    constr_regressors: list, names of constrained regressors.
-    constr_bounds: list, lower and upper bound for constrained regressors.
 
     """
 
@@ -100,8 +98,6 @@ class Prophet(object):
             interval_width=0.80,
             uncertainty_samples=1000,
             stan_backend='PYSTAN',
-            constr_regressors=[],
-            constr_bounds=[0, 1e10],
     ):
         self.growth = growth
 
@@ -146,30 +142,29 @@ class Prophet(object):
         self.train_holiday_names = None
         self.fit_kwargs = {}
         self.validate_inputs()
-        self.constr_regressors = constr_regressors
-        self.constr_bounds = constr_bounds
-        self._load_stan_backend(stan_backend)
         self.fitted = None
+        self.contrained_regressors_dict = {}
+        self.stan_backend = stan_backend
+
+    def _load_stan_backend(self, stan_backend, contrib_model):
 
         if self.stan_backend == 'CMDSTANPY':
             from cmdstanpy import cmdstan_path, set_cmdstan_path
             set_cmdstan_path(CMDSTAN_PATH)
-            newpath = cmdstan_path()
-            print(f'PATH FOR CMDSTAN: {newpath}')
-
-    def _load_stan_backend(self, stan_backend):
+            print(f'PATH FOR CMDSTAN: {cmdstan_path()}')
 
         if stan_backend is None:
             for i in StanBackendEnum:
-                print(i)
                 try:
                     logger.debug("Trying to load backend: %s", i.name)
                     return self._load_stan_backend(i.name)
                 except Exception as e:
                     logger.debug("Unable to load backend %s (%s), trying the next one", i.name, e)
         else:
-            self.stan_backend = StanBackendEnum.get_backend_class(stan_backend)(logger, self.constr_regressors)
+            self.stan_backend = StanBackendEnum.get_backend_class(stan_backend)(logger, contrib_model)
+            print(f'Stan backend: {self.stan_backend.get_type()}')
             logger.debug("Loaded stan backend: %s", self.stan_backend.get_type())
+
 
     def validate_inputs(self):
         """Validates the inputs to Prophet."""
@@ -599,7 +594,7 @@ class Prophet(object):
         return holiday_features, prior_scale_list, holiday_names
 
     def add_regressor(self, name, prior_scale=None, standardize='auto',
-                      mode=None):
+                      mode=None, constraints=None):
         """Add an additional regressor to be used for fitting and predicting.
 
         The dataframe passed to `fit` and `predict` will have a column with the
@@ -640,6 +635,7 @@ class Prophet(object):
             raise ValueError('Prior scale must be > 0')
         if mode not in ['additive', 'multiplicative']:
             raise ValueError("mode must be 'additive' or 'multiplicative'")
+
         self.extra_regressors[name] = {
             'prior_scale': prior_scale,
             'standardize': standardize,
@@ -647,6 +643,8 @@ class Prophet(object):
             'std': 1.,
             'mode': mode,
         }
+        if bool(constraints):
+            self.contrained_regressors_dict.update({name: constraints})
         return self
 
     def add_seasonality(self, name, period, fourier_order, prior_scale=None,
@@ -776,6 +774,7 @@ class Prophet(object):
         """
         seasonal_features = []
         prior_scales = []
+        constraints_dict = {}
         modes = {'additive': [], 'multiplicative': []}
 
         # Seasonality features
@@ -847,7 +846,6 @@ class Prophet(object):
                 x.split('_delim_')[0] for x in seasonal_features.columns
             ],
         })
-
 
         # Add total for holidays
         if self.train_holiday_names is not None:
@@ -1136,13 +1134,17 @@ class Prophet(object):
             's_m': component_cols['multiplicative_terms'],
         }
 
-        if self.constr_regressors:
-            constr_col_idx = [int(seasonal_features.columns.tolist().index(x) + 1) for x in self.constr_regressors]
-            dat.update({'n_constr': len(constr_col_idx),
+        if bool(list(self.contrained_regressors_dict.keys())):
+            constr_col_idx = [int(seasonal_features.columns.tolist().index(x) + 1) for x in
+                              list(self.contrained_regressors_dict.keys())]
+            bounds_array = np.array([v for k, v in self.contrained_regressors_dict.items()])
+            dat.update({'n_constr': bounds_array.shape[0],
                         'constr_vec': constr_col_idx,
-                        'L': self.constr_bounds[0],
-                        'U': self.constr_bounds[1]
+                        'B': bounds_array
                         })
+            self._load_stan_backend(self.stan_backend, True)
+        else:
+            self._load_stan_backend(self.stan_backend, False)
 
         if self.growth == 'linear':
             dat['cap'] = np.zeros(self.history.shape[0])
@@ -1322,7 +1324,7 @@ class Prophet(object):
         -------
         Dataframe with seasonal components.
         """
-        seasonal_features, _, component_cols, _ = (
+        seasonal_features, _, component_cols, _  = (
             self.make_all_seasonality_features(df)
         )
         if self.uncertainty_samples:
@@ -1365,7 +1367,7 @@ class Prophet(object):
         )))
 
         # Generate seasonality features once so we can re-use them.
-        seasonal_features, _, component_cols, _ = (
+        seasonal_features, _, component_cols, _  = (
             self.make_all_seasonality_features(df)
         )
 
