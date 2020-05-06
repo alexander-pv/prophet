@@ -1143,6 +1143,7 @@ class Prophet(object):
                         'B': bounds_array
                         })
             self._load_stan_backend(self.stan_backend, True)
+
         else:
             self._load_stan_backend(self.stan_backend, False)
 

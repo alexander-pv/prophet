@@ -110,10 +110,11 @@ parameters {
 }
 
 transformed parameters {
-  vector[K] beta;                      // Regressor coefficients
+  vector[K] beta;
+  vector[n_constr] sigmas_pos;
   beta[norm_vec] = beta_unconstrained;
   beta[constr_vec] = beta_constrained;
-
+  sigmas_pos = sigmas[constr_vec];
 }
 
 model {
@@ -125,7 +126,7 @@ model {
 
   beta_unconstrained ~ normal(0, sigmas[norm_vec]);
   for (i in 1:n_constr) {
-      beta_constrained[i] ~ normal(0, 1) T[B[i, 1], B[i, 2]];
+      beta_constrained[i] ~ normal(0, sigmas_pos[i]) T[B[i, 1], B[i, 2]];
   };
 
   // Likelihood
