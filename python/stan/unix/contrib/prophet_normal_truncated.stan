@@ -105,12 +105,12 @@ parameters {
   real m;                   // Trend offset
   vector[S] delta;          // Trend rate adjustments
   real<lower=0> sigma_obs;  // Observation noise
-  vector<lower=0>[n_constr] beta_constrained;
+  vector<lower=0, upper=1>[n_constr] beta_constrained;
   vector[K-n_constr] beta_unconstrained;
 }
 
 transformed parameters {
-  vector[K] beta;                      // Regressor coefficients
+  vector[K] beta;           // Regressor coefficients
   beta[norm_vec] = beta_unconstrained;
   beta[constr_vec] = beta_constrained;
 
