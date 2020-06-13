@@ -423,7 +423,7 @@ class Prophet(object):
                 self.changepoints = []
 
         # Drop possible prohibited changepoints
-        if len(self.prohibited_changepoints)>0:
+        if self.prohibited_changepoints:
             n0 = len(self.changepoints)
             self.changepoints = self.changepoints[~self.changepoints.isin(
                 self.prohibited_changepoints)].copy(deep=True)
