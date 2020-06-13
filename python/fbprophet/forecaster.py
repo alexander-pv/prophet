@@ -85,6 +85,7 @@ class Prophet(object):
             growth='linear',
             changepoints=None,
             n_changepoints=25,
+            prohibited_changepoints=None,
             changepoint_range=0.8,
             yearly_seasonality='auto',
             weekly_seasonality='auto',
@@ -109,6 +110,7 @@ class Prophet(object):
             self.n_changepoints = n_changepoints
             self.specified_changepoints = False
 
+        self.prohibited_changepoints = prohibited_changepoints
         self.changepoint_range = changepoint_range
         self.yearly_seasonality = yearly_seasonality
         self.weekly_seasonality = weekly_seasonality
@@ -419,6 +421,15 @@ class Prophet(object):
             else:
                 # set empty changepoints
                 self.changepoints = []
+
+        # Drop possible prohibited changepoints
+        if len(self.prohibited_changepoints)>0:
+            n0 = len(self.changepoints)
+            self.changepoints = self.changepoints[~self.changepoints.isin(
+                self.prohibited_changepoints)].copy(deep=True)
+            n1 = len(self.changepoints)
+            print(f'Dropped prohibited changepoints:{n0-n1}')
+
         if len(self.changepoints) > 0:
             self.changepoints_t = np.sort(np.array(
                 (self.changepoints - self.start) / self.t_scale))
